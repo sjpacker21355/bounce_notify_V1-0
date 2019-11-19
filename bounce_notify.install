@@ -1,0 +1,109 @@
+<?php
+/*
+ * Name: bounce_notify.install  V1.0 11/15/19
+ */
+
+function bounce_notify_install() {
+}
+
+function bounce_notify_uninstall() {
+  if(db_table_exists('bounce_notified')) {
+    db_drop_table('bounce_notified');
+  }
+}
+
+/**
+ * Implements hook_schema().
+ */
+function bounce_notify_schema() {
+  if(db_table_exists('bounce_notified')) {return NULL;}
+  $schema['bounce_notified'] = array( 
+    'description' => 'Sender of email notified of bounce.', 
+    'fields' => array( 
+      'report_id' => array( 
+        'type' => 'int', 
+        'size' => 'normal', 
+        'unsigned' => TRUE, 
+        'not null' => TRUE,
+        'description'=>'Reord id of bounce report sved from a bounced email.',
+        ),
+      'blocked_id' => array( 
+        'type' => 'int', 
+        'size' => 'normal', 
+        'unsigned' => TRUE, 
+        'description'=>'Id of the blocked email record.',
+        ),
+      'Notified' => array( 
+        'type' => 'char', 
+        'length' => 1, 
+        'not null' => TRUE,
+        'description'=>'Set to Y if sender was notified of the bouned email.',
+        ),
+      'Date' => array( 
+        'mysql_type' => 'datetime', 
+        'not null' => TRUE, 
+        'description'=>'Date the notification of a bounced email.',
+        ),
+      'County' => array(
+        'type' => 'varchar', 
+        'length' => 32, 
+        'not null' => TRUE, 
+        'description'=>'County associated with the NL.',
+        ),
+      'NLFirstName' => array( 
+        'type' => 'varchar', 
+        'length' => 30, 
+        'not null' => TRUE, 
+        'description'=>'First name of the NL with the faulty email.',
+        ),
+      'NLLastName' => array( 
+        'type' => 'varchar', 
+        'length' => 30, 
+        'not null' => TRUE, 
+        'description'=>'Last name of the NL with the faulty email.',
+        ),
+      'NLEmail' => array( 
+        'type' => 'varchar', 
+        'length' => 60, 
+        'not null' => TRUE, 
+        'description'=>'The bounced email.',
+        ),
+      'SFirstName' => array( 
+        'type' => 'varchar', 
+        'length' => 30, 
+        'not null' => TRUE, 
+        'description'=>'First name of sender.',
+        ),
+      'SLastName' => array( 
+        'type' => 'varchar', 
+        'length' => 30, 
+        'not null' => TRUE, 
+        'description'=>'Last name of sender.',
+        ),
+      'SEmail' => array( 
+        'type' => 'varchar', 
+        'length' => 60, 
+        'not null' => TRUE, 
+        'description'=>'Email for the sender.',
+        ),
+      'Code' => array( 
+        'type' => 'varchar', 
+        'length' => 32, 
+        'not null' => TRUE, 
+        'description'=>'Error code for the bounce.',
+        ),
+      'Description' => array( 
+        'type' => 'varchar', 
+        'length' => 255, 
+        'not null' => TRUE, 
+        'description'=>'Description of the reason for the bounce.',
+        ),
+    ),
+    'primary key' => array( 'report_id', ),
+    'indexes' => array( 
+      'NLEmail' => array( 'NLEmail', ),
+    ),
+  );
+
+  return $schema;
+}

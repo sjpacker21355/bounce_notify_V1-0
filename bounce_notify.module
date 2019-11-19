@@ -1,0 +1,215 @@
+<?php
+/**
+ * Name:  bounce_notify.module     V1.0  11/15/19
+ */
+
+require_once "bounce_notify_class_bounce.php";
+
+use Drupal\bounce_notify\BounceNotify;
+
+define('NLP_MODULE2','nlpservices');
+
+function bounce_notify_menu() {
+  $items = array();
+  $items['bouncedemails'] = array(
+    'title' => 'Blocked Email Report',
+    'description' => 'Display list of email bounce reports',
+    'access arguments' => array('authenticated user'),
+    'access callback' => TRUE,
+    'page callback' => 'bounce_notify_report',
+    'file' => 'bounce_notify_report.php',
+    'type' => MENU_CALLBACK,
+    );
+  return $items;
+};
+
+/** * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ * bounce_notify_mail_alter
+ * 
+ * Implements hook mail alter.
+ * 
+ * @param type $message
+ */
+function bounce_notify_mail_alter(&$message) {
+  switch ($message['module']) {
+    case 'bounce_notify':
+      $options = array(
+        'langcode' => $message['language']->language,
+      );
+      $from = variable_get('nlp_email', 'notifications@nlpservices.org');
+      $signature = t('<br>If you received this email in error, please forward it to '
+        . $from . " and we will remove you from future emails.", array(), $options);
+      if (is_array($message['body'])) {
+        $message['body'][] = $signature;
+      }
+      else {
+        // Some modules use the body as a string, erroneously.
+        $message['body'] .= $signature;
+      }
+      break;
+  }
+}
+
+/** * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ * bounce_notify_mail
+ * 
+ * @param type $key
+ * @param type $message
+ * @param type $params
+ */
+function bounce_notify_mail($key, &$message, $params) {
+  $options = array(
+    'langcode' => $message['language']->language,
+  );
+  switch ($key) {
+    case 'notify bounce':
+      $message['headers']['Content-Type'] = 'text/html; charset=UTF-8;';
+      $message['subject'] = t('Neighborhood Leader Notification - NL email bounce', 
+        $options);
+      $message['body'][] = $params['message'];
+      $message['body'][] = t('<br><em>The NLP services admin sent you this message.</em>');
+      break;
+  }
+}
+
+/** * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ * bounce_notify_bounce_mails_blocked
+ * 
+ * Implements hook_bounce_mails_blocked.  Identifies emails that are not 
+ * deliverable to avoid being blacklisted by SPAM filters.
+ * 
+ */
+function bounce_notify_bounce_mails_blocked($mails) {
+  $bounceObj = new BounceNotify();
+  foreach ($mails as $mail) { 
+    $bouncesInfo = $bounceObj->bouncesByMail($mail);
+    //drupal_set_message('email blocked'.'<pre>'.print_r($bouncesInfo, true).'</pre>','status');
+    $bounceNotifed = $bounceObj->bounceProcessedStatus($mail);
+    if($bounceNotifed == 'Y') {return;}
+    foreach ($bouncesInfo as $reportId => $bouncedMailInfo) {
+      break;  // use the first one.
+    }
+    $code = $bouncedMailInfo['code'];
+    $date = date("F j, Y, g:i a",$bouncedMailInfo['created']);
+    // Check if we have the nlpservices marker and the eor in the header.
+    $report_blob = $bouncedMailInfo['report'];
+    $needle = "x-nlpservices-notify";
+    $needle_len = strlen($needle)+1;
+    $pos = stripos($report_blob, $needle);
+    if($pos !== FALSE) {
+      $end = stripos($report_blob, "<eor>");
+      if($end !== FALSE) {
+        // We have a new bounce, add it to the list for notification.
+        $start = $pos+$needle_len;
+        $notify_str = substr($report_blob, $start, $end-$start);
+        // Decode the nlpservices turf delivery header record.
+        $notify = json_decode($notify_str,TRUE);
+        //drupal_set_message('notify:  '.'<pre>'.print_r($notify, true).'</pre>','status');
+        $scounty = $notify['sender']['county'];
+        $remail = $notify['recipient']['r-email'];
+        
+        $module = NLP_MODULE2;
+        $key = 'notify bounce';
+        $language = language_default();
+        $send = TRUE;
+        $admin = variable_get('nlp_email', 'notifications@nlpservices.org');
+        
+        $from = 'NLP Admin<'.$admin.'>';
+        //$scounty = $notify['county'];
+        //$desc = $bouncer['description'];
+        $code = $bouncedMailInfo['code'];
+        $rfn = $notify['recipient']['r-fn'];
+        $rln = $notify['recipient']['r-ln']; 
+        
+        $sfn = $notify['sender']['s-fn'];
+        $sln = $notify['sender']['s-ln'];
+        $semail = $notify['sender']['s-email'];
+        
+        $desc = $bounceObj->getDescription($code);
+        
+        // Construct the message for the sender.
+        $message = "<p>".$sfn.",";
+        $message .= '<br>'.t('The email you sent to the NL below was not delivered.');
+        $message .= '<br><br><b>'.t('@fn @ln - @email <br>Code: @code - Description: @desc '.'</b><br>',
+          array(
+            '@fn' => $rfn,
+            '@ln' => $rln,
+            '@email' => $remail,
+            '@code' => $code,
+            '@desc' => $desc,
+            ));
+        $params['message'] = $message;
+        $to = $sfn.' '.$sln.'<'.$semail.'>';
+        //bounce_notify_debug_msg('to: '.$to.' from: '.$from, $params);
+        $eresult = drupal_mail($module, $key, $to, $language, $params, $from, $send);
+        if (!$eresult) {
+          watchdog('bounce_notify_process_emails', 'Bounce notification email failed.');
+        }
+        // Track the sending of these emails.
+        $outputr = 'From: '. $semail. ' To: '.$remail.' NL: '.$rfn.' '.$rln.' Code: '.$code.' Desc: '.$desc;
+        $output = substr($outputr, 0, 250);
+        watchdog('bounce_notify_process_emails', $output);
+        // Notify the sender only once by adding an entry in the notify table with
+        // the report_id.
+        $values['date'] = date("Y-m-d H:i:s",time());
+        $values['description'] = $desc;
+        $values['code'] = $code;
+        $values['recipientEmail'] = $remail;
+        $values['recipientLastName'] = $rln;
+        $values['recipientFirstName'] = $rfn;
+        $values['senderEmail'] = $semail;
+        $values['senderLastName'] = $sln;
+        $values['senderFirstName'] = $sfn;
+        $values['county'] = $scounty;
+        $values['reportId'] = $bouncedMailInfo['reportId'];
+
+        $bounceObj->setBounceProcessedStatus ($values);
+      }
+    }
+  }
+  
+}
+
+/** * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ * bounce_notify_bounce_mails_unblocked
+ * 
+ * Implements hook_bounce_mails_unblocked.   Detects that an email has been
+ * unblocked by the admin.   It allows the emai address to be used to be sent 
+ * an email.
+ * 
+ */
+function bounce_notify_bounce_mails_unblocked($mails) {
+  drupal_set_message('emails unblocked'.'<pre>'.print_r($mails, true).'</pre>','status');
+  watchdog('bounce_notify', 'unbounced emails'.print_r($mails, true));
+  $bounceObj = new BounceNotify();
+  foreach ($mails as $mail) {
+    $bounceObj->deleteNotification($mail);
+  }
+}
+
+/**
+ * 
+ */
+function bounce_notify_get_email_status($mail) {
+  $bounceObj = new BounceNotify();
+  $emailBlocked = $bounceObj->bounceProcessedStatus($mail);
+  return $emailBlocked;
+}
+
+/** * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ * 
+ */
+function bounce_notify_sanitize_string($string) {
+  return trim(strip_tags(htmlentities(stripslashes($string),ENT_QUOTES))); 
+}
+
+/** * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ * 
+ */
+function bounce_notify_debug_msg($msg,$structure) {
+  drupal_set_message("DEBUG ".$msg ,'status');
+  if (!empty($structure)) {
+    drupal_set_message('<pre>'.print_r($structure, true).'</pre>','status');
+  }
+}
+
